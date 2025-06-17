@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <title>Image Measurer</title>
+
+    <!-- Google Font -->
+    <link rel="preconnect" href="https://fonts.gstatic.com"/>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+
+    <style>
+        :root{
+            --bg:#f7f9fc; --fg:#1f2937; --accent:#3b82f6; --radius:.75rem;
+            --shadow-sm:0 1px 2px rgba(0,0,0,.06);
+            --shadow-md:0 3px 6px rgba(0,0,0,.08);
+            --trans-fast:150ms ease;
+        }
+        *,*::before,*::after{box-sizing:border-box;}
+        body{margin:0;min-height:100vh;font-family:"Inter",system-ui,sans-serif;
+            background:var(--bg);color:var(--fg);}
+        h1{font-size:1.85rem;text-align:center;margin:.75rem 0 1.75rem;}
+
+        .container{max-width:900px;margin:clamp(1rem,3vw,2rem) auto;
+            padding:1.75rem 2rem 2.5rem;background:#fff;
+            border-radius:var(--radius);box-shadow:var(--shadow-md);}
+
+        /* Controls */
+        .controls{display:flex;gap:1rem 1.75rem;align-items:center;margin-bottom:1.5rem;}
+        label{font-weight:500;font-size:.92rem;margin-right:.35rem;}
+
+        input[type="file"]::file-selector-button{
+            font:inherit;padding:.45rem 1rem;border-radius:var(--radius);border:none;
+            background:var(--accent);color:#fff;cursor:pointer;
+            transition:background var(--trans-fast);}
+        input[type="file"]::file-selector-button:hover{
+            background:color-mix(in srgb,var(--accent) 85%,#000);}
+
+        input[type="number"],input[type="text"]{
+            width:7.5rem;padding:.45rem .6rem;border:1px solid #d1d5db;
+            border-radius:var(--radius);font:inherit;
+            transition:border-color var(--trans-fast),box-shadow var(--trans-fast);}
+        input[type="number"]:focus,input[type="text"]:focus{
+            outline:none;border-color:var(--accent);
+            box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 30%,transparent);}
+
+        input[type="color"]{
+            border:none;width:2.75rem;height:2.75rem;padding:0;border-radius:50%;
+            box-shadow:var(--shadow-sm);cursor:pointer;transition:transform var(--trans-fast);}
+        input[type="color"]:hover{transform:scale(1.06);}
+
+        /* Download button */
+        .btn{
+            padding:.55rem 1.25rem;border:none;border-radius:var(--radius);
+            background:var(--accent);color:#fff;font:500 .95rem Inter,sans-serif;
+            cursor:pointer;box-shadow:var(--shadow-sm);
+            transition:background var(--trans-fast),transform var(--trans-fast);}
+        .btn:hover{background:color-mix(in srgb,var(--accent) 85%,#000);}
+        .btn:disabled{background:#cbd5e1;cursor:not-allowed;transform:none;}
+
+        /* Canvas */
+        #canvas{
+            max-width:100%;display:block;cursor:crosshair;margin:auto;
+            border:2px dashed #e5e7eb;border-radius:var(--radius);
+            box-shadow:var(--shadow-sm);
+            background:repeating-conic-gradient(#fafafa 0% 25%,#fff 0% 50%) 50%/1.2rem 1.2rem;}
+
+        /* Info block */
+        .info{font-size:.9rem;line-height:1.6;color:#4b5563;
+            background:#f1f1f1;padding:25px 25px 25px 10px;border-radius:10px;
+            margin:1.5rem 0;}
+        .info h1{font-size:1.25rem;margin:0 0 .25rem;}
+        kbd{padding:.15rem .45rem;font-size:.8rem;line-height:1;
+            color:#111827;background:#e5e7eb;border-radius:.25rem;
+            border:1px solid #d1d5db;box-shadow:inset 0 -1px 0 #d1d5db;}
+
+        #scale {
+            width:200px
+        }
+
+        @media(max-width:640px){
+            .controls{flex-direction:column;align-items:flex-start;}
+            input[type="number"],input[type="text"]{width:100%;}
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Image Measurer</h1>
+
+    <!-- Controls -->
+    <div class="controls">
+        <div><label for="file">Upload</label><input type="file" id="file" accept="image/*"></div>
+        <div><label for="scale">Units / pixel</label><input type="number" id="scale" step="any" min="0" placeholder="e.g. 0.00661375661"></div>
+        <div><label for="unit">Unit label</label><input type="text" id="unit" value="m" placeholder="m"></div>
+        <div><label for="color">Line colour</label><input type="color" id="color" value="#ff4957"></div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <div class="info">
+        <h1>Info</h1>
+        <ul>
+            <li>Click once to start measuring; move to preview, click again to finish.</li>
+            <li>Hold <kbd>Shift</kbd> while finishing a line to chain measurements.</li>
+            <li>Click an existing line to delete it.</li>
+            <li>Lengths show in pixels unless you specify a scale &amp; unit label.</li>
+        </ul>
+    </div>
+
+    <button id="download" class="btn" disabled>Download</button>
+</div>
+
+<script>
+  (() => {
+    /* Elements */
+    const fileInput   = document.getElementById("file");
+    const scaleInput  = document.getElementById("scale");
+    const unitInput   = document.getElementById("unit");
+    const colorInput  = document.getElementById("color");
+    const downloadBtn = document.getElementById("download");
+    const canvas      = document.getElementById("canvas");
+    const ctx         = canvas.getContext("2d");
+
+    /* State */
+    let img=null, startPoint=null, isMeasuring=false;
+    const lines=[];
+    let lineColor=colorInput.value;
+    const HIT=6;                          // px tolerance in *display* pixels
+
+    /* --- Coordinate helpers ------------------------------------------------ */
+    // Convert mouse event to canvas INNER pixel coords, compensating for CSS scaling
+    const toCanvas = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width  / rect.width;
+      const scaleY = canvas.height / rect.height;   // ≈ scaleX but separate for safety
+      return {
+        x: Math.round((e.clientX - rect.left) * scaleX),
+        y: Math.round((e.clientY - rect.top ) * scaleY)
+      };
+    };
+    // Display-space distance for hit-tests (uses rect width/height)
+    const cssDist = (p1, p2) => Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+    /* Geometry */
+    const segDistCanvas = (p, s) => {          // point-to-segment (canvas space)
+      const vx=s.x2-s.x1, vy=s.y2-s.y1, wx=p.x-s.x1, wy=p.y-s.y1;
+      const c1=vx*wx+vy*wy; if(c1<=0) return Math.hypot(wx,wy);
+      const c2=vx*vx+vy*vy; if(c2<=c1) return Math.hypot(p.x-s.x2,p.y-s.y2);
+      const b=c1/c2, px=s.x1+b*vx, py=s.y1+b*vy;
+      return Math.hypot(p.x-px,p.y-py);
+    };
+    const lenFmt = (px)=>{
+      const s=parseFloat(scaleInput.value);
+      return s && s>0 ? (px*s).toFixed(2)+" "+(unitInput.value.trim()||"?") : px.toFixed(1)+" px";
+    };
+
+    /* Drawing helpers */
+    const drawLabel = (txt,x,y)=>{
+      ctx.font="500 15px Inter, sans-serif";
+      const pad=4, m=ctx.measureText(txt),
+        asc=m.actualBoundingBoxAscent??12,
+        desc=m.actualBoundingBoxDescent??4, h=asc+desc;
+      ctx.fillStyle="rgba(255,255,255,.85)";
+      ctx.fillRect(x-pad,y-asc-pad,m.width+pad*2,h+pad*2);
+      ctx.fillStyle=lineColor; ctx.fillText(txt,x,y);
+    };
+    const redraw = (preview=null)=>{
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      if(img) ctx.drawImage(img,0,0);
+
+      ctx.lineWidth=2; ctx.strokeStyle=lineColor;
+      lines.forEach(l=>{
+        ctx.beginPath(); ctx.moveTo(l.x1,l.y1); ctx.lineTo(l.x2,l.y2); ctx.stroke();
+        drawLabel(l.text,l.lx,l.ly);
+      });
+
+      if(isMeasuring && startPoint && preview){
+        ctx.setLineDash([6,4]);
+        ctx.beginPath(); ctx.moveTo(startPoint.x,startPoint.y);
+        ctx.lineTo(preview.x,preview.y); ctx.stroke();
+        ctx.setLineDash([]);
+        drawLabel(lenFmt(Math.hypot(preview.x-startPoint.x,preview.y-startPoint.y)),
+          preview.x+8,preview.y-8);
+      }
+    };
+
+    /* Reset when new file chosen */
+    const reset = () => {
+      img=null; startPoint=null; isMeasuring=false; lines.length=0;
+      downloadBtn.disabled=true; canvas.width=canvas.height=0;
+    };
+
+    /* Load image */
+    fileInput.addEventListener("change", e=>{
+      const file=e.target.files[0]; if(!file) return;
+      reset();
+      const reader=new FileReader();
+      reader.onload = ev=>{
+        img=new Image();
+        img.onload=()=>{
+          canvas.width=img.width;
+          canvas.height=img.height;
+          downloadBtn.disabled=false;
+          redraw();
+        };
+        img.src=ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    /* Canvas interactions */
+    const move = e => isMeasuring && redraw(toCanvas(e));
+
+    canvas.addEventListener("mousedown", e=>{
+      if(!img) return;
+
+      const clickCanvas   = toCanvas(e);                  // internal coords
+      const clickDisplay  = {                             // css coords for hit-test
+        x:e.clientX - canvas.getBoundingClientRect().left,
+        y:e.clientY - canvas.getBoundingClientRect().top
+      };
+
+      /* Deletion test — use display-space tolerance */
+      const hitScale = canvas.width / canvas.clientWidth; // convert tolerance
+      for(let i=0;i<lines.length;i++){
+        if(segDistCanvas(clickCanvas,lines[i]) <= HIT*hitScale){
+          lines.splice(i,1); redraw(); return;
+        }
+      }
+
+      /* Measuring logic */
+      if(!isMeasuring){
+        startPoint = clickCanvas; isMeasuring=true; canvas.addEventListener("mousemove",move);
+      }else{
+        const length = Math.hypot(clickCanvas.x-startPoint.x, clickCanvas.y-startPoint.y);
+        lines.push({
+          x1:startPoint.x, y1:startPoint.y, x2:clickCanvas.x, y2:clickCanvas.y,
+          text:lenFmt(length),
+          lx:(startPoint.x+clickCanvas.x)/2,
+          ly:(startPoint.y+clickCanvas.y)/2
+        });
+        if(e.shiftKey){ startPoint = clickCanvas; redraw(); }
+        else{ isMeasuring=false; startPoint=null; canvas.removeEventListener("mousemove",move); redraw(); }
+      }
+    });
+
+    /* Inputs: update labels / colour */
+    const refreshLabels = ()=>{
+      lines.forEach(l=>{
+        l.text=lenFmt(Math.hypot(l.x2-l.x1,l.y2-l.y1));
+      });
+      redraw();
+    };
+    scaleInput.addEventListener("input",refreshLabels);
+    unitInput .addEventListener("input",refreshLabels);
+    colorInput.addEventListener("input",()=>{ lineColor=colorInput.value; redraw(); });
+
+    /* Download */
+    downloadBtn.addEventListener("click",()=>{
+      if(!img) return;
+      redraw();                                // ensure up-to-date
+      const a=document.createElement("a");
+      a.download="measurements.png";
+      a.href=canvas.toDataURL("image/png");
+      a.click();
+    });
+  })();
+</script>
+</body>
+</html>
