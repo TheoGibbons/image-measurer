@@ -145,6 +145,20 @@
     let fontSize =parseInt(fontInput.value,10);
     const HIT=6;
 
+    // Load default image on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      const defaultImg = new Image();
+      defaultImg.onload = () => {
+        img = defaultImg;
+        canvas.width = img.width;
+        canvas.height = img.height;
+        downloadBtn.disabled = false;
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(img,0,0);
+      };
+      defaultImg.src = 'house.jpg';
+    });
+
     const toCanvas=e=>{
       const r=canvas.getBoundingClientRect();
       return {x:Math.round((e.clientX-r.left)*canvas.width /r.width),
@@ -261,3 +275,4 @@
 </script>
 </body>
 </html>
+
